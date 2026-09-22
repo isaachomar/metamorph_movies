@@ -5,7 +5,6 @@
  *  ij.IJ
  *  ij.ImagePlus
  *  ij.ImageStack
- *  ij.Macro
  *  ij.io.FileInfo
  *  ij.io.FileSaver
  *  ij.io.OpenDialog
@@ -49,283 +48,290 @@ implements PlugIn {
     String[] channelNames = new String[MAX_WAVELENGTHS];
     int defaultMethod = 1;
 
-    public void run(String string) {
-        int n;
-        String string2;
-        int n2 = -1;
-        int n3 = -1;
-        int n4 = -1;
+    public void run(String args) {
+        String imageName;
+        int ind = -1;
+        int first = -1;
+        int last = -1;
         IJ.redirectErrorMessages();
-        String string3 = Macro.getOptions();
-        if (string3 != null) {
-            this.currDir = Macro.getValue((String)string3, (String)"directory", (String)"");
+
+        // OpenDialog od = new OpenDialog("Select a file in the folder to process ...", this.currDir);
+        // this.currDir = od.getDirectory();
+        // if (this.currDir == null) {
+        //     return;
+        // }
+        String options = Macro.getOptions();
+
+        if (options != null) {
+            this.currDir = Macro.getValue(options, "directory", "");
         } else {
-            OpenDialog openDialog = new OpenDialog("Select a file in the folder to process ...", this.currDir);
-            this.currDir = openDialog.getDirectory();
+            OpenDialog od = new OpenDialog(
+                "Select a file in the folder to process ...",
+                this.currDir
+            );
+            this.currDir = od.getDirectory();
         }
+
         if (this.currDir == null || this.currDir.equals("")) {
             return;
         }
-        boolean bl = true;
-        String string4 = IJ.getString((String)"Slices to project (first(min is 1)-last):", (String)"");
-        if (string4 != null && !string4.equals("")) {
-            n2 = string4.indexOf("-");
-            n3 = Integer.valueOf(string4.substring(0, n2));
-            n4 = Integer.valueOf(string4.substring(n2 + 1));
-            bl = false;
+
+        boolean projectAll = true;
+        String sliceRange = IJ.getString((String)"Slices to project (first(min is 1)-last):", (String)"");
+        if (sliceRange != null && !sliceRange.equals("")) {
+            ind = sliceRange.indexOf("-");
+            first = Integer.valueOf(sliceRange.substring(0, ind));
+            last = Integer.valueOf(sliceRange.substring(ind + 1));
+            projectAll = false;
         }
-        if ((string2 = IJ.getString((String)"Output image base name:", (String)"")) == null) {
+        if ((imageName = IJ.getString((String)"Output image base name:", (String)"")) == null) {
             return;
         }
         this.readMovieInfo();
         System.out.println("There are " + this.nMovies + " movies in this folder.");
         System.out.println("There are " + this.nWavelengths + " wavelengths per movie.");
-        for (n = 0; n < MAX_MOVIES; ++n) {
-            if (!this.theMovies[n]) continue;
-            System.out.println("Movie #" + (n + 1) + " starts at " + this.theMinTP[n] + " and ends at " + this.theMaxTP[n]);
+        for (int ii = 0; ii < MAX_MOVIES; ++ii) {
+            if (!this.theMovies[ii]) continue;
+            System.out.println("Movie #" + (ii + 1) + " starts at " + this.theMinTP[ii] + " and ends at " + this.theMaxTP[ii]);
         }
-        for (n = 0; n < MAX_WAVELENGTHS; ++n) {
-            if (!this.theWavelengths[n]) continue;
-            ImageStack imageStack = null;
-            int n5 = 0;
-            for (int i = 0; i < MAX_MOVIES; ++i) {
-                ImageProcessor imageProcessor;
-                Object object;
-                if (!this.theMovies[i]) continue;
-                System.out.print("Processing movie #" + (i + 1) + ", wavelength #" + (n + 1) + " ... ");
-                ImageStack imageStack2 = null;
-                int n6 = 0;
-                int n7 = 0;
-                int n8 = 0;
-                int n9 = 0;
-                int n10 = 0;
-                ColorModel colorModel = null;
-                for (int j = this.theMinTP[i]; j <= this.theMaxTP[i]; ++j) {
-                    object = null;
-                    object = !this.channelNames[n].equals("") ? new String(this.baseName + "n" + (i + 1) + "_w" + (n + 1) + this.channelNames[n] + "_t" + j + ".TIF") : new String(this.baseName + "n" + (i + 1) + "_t" + j + ".TIF");
+        for (int iw = 0; iw < MAX_WAVELENGTHS; ++iw) {
+            if (!this.theWavelengths[iw]) continue;
+            ImageStack finalStack = null;
+            int finalcount = 0;
+            for (int im = 0; im < MAX_MOVIES; ++im) {
+                if (!this.theMovies[im]) continue;
+                System.out.print("Processing movie #" + (im + 1) + ", wavelength #" + (iw + 1) + " ... ");
+                ImageStack stack = null;
+                int width = 0;
+                int height = 0;
+                int depth = 0;
+                int bitDepth = 0;
+                int count = 0;
+                ColorModel cm = null;
+                for (int it = this.theMinTP[im]; it <= this.theMaxTP[im]; ++it) {
+                    String fileName = null;
+                    fileName = !this.channelNames[iw].equals("") ? new String(this.baseName + "n" + (im + 1) + "_w" + (iw + 1) + this.channelNames[iw] + "_t" + it + ".TIF") : new String(this.baseName + "n" + (im + 1) + "_t" + it + ".TIF");
                     try {
                         Opener opener = new Opener();
                         opener.setSilentMode(true);
-                        imageProcessor = opener.openImage(this.currDir, (String)object);
-                        if (imageProcessor != null && imageStack2 == null) {
-                            n6 = imageProcessor.getWidth();
-                            n7 = imageProcessor.getHeight();
-                            n8 = imageProcessor.getStackSize();
-                            n9 = imageProcessor.getBitDepth();
-                            colorModel = imageProcessor.getProcessor().getColorModel();
-                            imageStack2 = new ImageStack(n6, n7, colorModel);
+                        ImagePlus imp = opener.openImage(this.currDir, fileName);
+                        if (imp != null && stack == null) {
+                            width = imp.getWidth();
+                            height = imp.getHeight();
+                            depth = imp.getStackSize();
+                            bitDepth = imp.getBitDepth();
+                            cm = imp.getProcessor().getColorModel();
+                            stack = new ImageStack(width, height, cm);
                         }
-                        if (imageProcessor == null) {
-                            if (((String)object).startsWith(".")) continue;
-                            IJ.log((String)((String)object + ": unable to open"));
+                        if (imp == null) {
+                            if (fileName.startsWith(".")) continue;
+                            IJ.log((String)(fileName + ": unable to open"));
                             continue;
                         }
-                        if (imageProcessor.getWidth() != n6 || imageProcessor.getHeight() != n7) {
-                            IJ.log((String)((String)object + ": wrong size; " + n6 + "x" + n7 + " expected, " + imageProcessor.getWidth() + "x" + imageProcessor.getHeight() + " found"));
+                        if (imp.getWidth() != width || imp.getHeight() != height) {
+                            IJ.log((String)(fileName + ": wrong size; " + width + "x" + height + " expected, " + imp.getWidth() + "x" + imp.getHeight() + " found"));
                             continue;
                         }
-                        ImageStack imageStack3 = imageProcessor.getStack();
-                        if (bl) {
-                            n3 = 1;
-                            n4 = imageStack3.getSize();
+                        ImageStack inputStack = imp.getStack();
+                        if (projectAll) {
+                            first = 1;
+                            last = inputStack.getSize();
                         } else {
-                            if (n3 < 1) {
-                                n3 = 1;
+                            if (first < 1) {
+                                first = 1;
                             }
-                            if (n3 > imageStack3.getSize()) {
-                                n4 = n3 = imageStack3.getSize();
+                            if (first > inputStack.getSize()) {
+                                last = first = inputStack.getSize();
                             }
-                            if (n4 < 1) {
-                                n4 = 1;
-                                n3 = 1;
+                            if (last < 1) {
+                                first = last = 1;
                             }
-                            if (n4 > imageStack3.getSize()) {
-                                n4 = imageStack3.getSize();
+                            if (last > inputStack.getSize()) {
+                                last = inputStack.getSize();
                             }
-                            n8 = n4 - n3 + 1;
+                            depth = last - first + 1;
                         }
-                        for (int k = n3; k <= n4; ++k) {
-                            ImageProcessor imageProcessor2 = imageStack3.getProcessor(k);
-                            int n11 = imageProcessor.getBitDepth();
-                            if (n11 != n9) {
-                                if (n9 == 8) {
-                                    imageProcessor2 = imageProcessor2.convertToByte(true);
-                                    n11 = 8;
-                                } else if (n9 == 24) {
-                                    imageProcessor2 = imageProcessor2.convertToRGB();
-                                    n11 = 24;
+                        for (int slice = first; slice <= last; ++slice) {
+                            ImageProcessor ip = inputStack.getProcessor(slice);
+                            int bitDepth2 = imp.getBitDepth();
+                            if (bitDepth2 != bitDepth) {
+                                if (bitDepth == 8) {
+                                    ip = ip.convertToByte(true);
+                                    bitDepth2 = 8;
+                                } else if (bitDepth == 24) {
+                                    ip = ip.convertToRGB();
+                                    bitDepth2 = 24;
                                 }
                             }
-                            if (n11 != n9) {
-                                IJ.log((String)((String)object + ": wrong bit depth; " + n9 + " expected, " + n11 + " found"));
+                            if (bitDepth2 != bitDepth) {
+                                IJ.log((String)(fileName + ": wrong bit depth; " + bitDepth + " expected, " + bitDepth2 + " found"));
                                 break;
                             }
-                            imageStack2.addSlice("(" + ++n10 + ")", imageProcessor2);
+                            stack.addSlice("(" + ++count + ")", ip);
                         }
                         if (!IJ.escapePressed()) continue;
                         IJ.beep();
                         break;
                     }
-                    catch (Exception exception) {
-                        System.out.println("\nError loading " + (String)object + ".\n");
-                        exception.printStackTrace();
+                    catch (Exception ex) {
+                        System.out.println("\nError loading " + fileName + ".\n");
+                        ex.printStackTrace();
                         return;
                     }
                 }
-                ImagePlus imagePlus = this.computeProjection(new ImagePlus("Projection of movie #" + (i - 1) + " - " + this.channelNames[n], imageStack2), n8);
-                object = imagePlus.getImageStack();
-                if (n5 == 0) {
-                    imageStack = new ImageStack(n6, n7, colorModel);
+                ImagePlus projected = this.computeProjection(new ImagePlus("Projection of movie #" + (im - 1) + " - " + this.channelNames[iw], stack), depth);
+                ImageStack projStack = projected.getImageStack();
+                if (finalcount == 0) {
+                    finalStack = new ImageStack(width, height, cm);
                 }
-                for (int j = 1; j <= object.getSize(); ++j) {
-                    imageProcessor = object.getProcessor(j);
-                    imageStack.addSlice("(" + ++n5 + ")", imageProcessor);
+                for (int slice = 1; slice <= projStack.getSize(); ++slice) {
+                    ImageProcessor ip = projStack.getProcessor(slice);
+                    finalStack.addSlice("(" + ++finalcount + ")", ip);
                 }
-                imageStack2 = null;
-                imagePlus = null;
-                object = null;
+                stack = null;
+                projected = null;
+                projStack = null;
                 System.gc();
                 System.out.println("done!");
             }
-            this.writeTIFF(new ImagePlus("Concatenated movie - " + this.channelNames[n], imageStack), string2 + "_" + this.channelNames[n] + ".tif", this.currDir);
-            imageStack = null;
+            this.writeTIFF(new ImagePlus("Concatenated movie - " + this.channelNames[iw], finalStack), imageName + "_" + this.channelNames[iw] + ".tif", this.currDir);
+            finalStack = null;
             System.gc();
         }
     }
 
     private boolean readMovieInfo() {
-        int n;
+        int ii;
         if (this.currDir == null) {
             return false;
         }
-        File file = new File(this.currDir);
-        String string = null;
-        boolean bl = false;
-        for (n = 0; n < MAX_WAVELENGTHS; ++n) {
-            this.theWavelengths[n] = false;
+        File dir = new File(this.currDir);
+        String fileName = null;
+        boolean boolNoWavelengthName = false;
+        for (ii = 0; ii < MAX_WAVELENGTHS; ++ii) {
+            this.theWavelengths[ii] = false;
         }
-        for (n = 0; n < MAX_MOVIES; ++n) {
-            this.theMovies[n] = false;
-            this.theMinTP[n] = Integer.MAX_VALUE;
-            this.theMaxTP[n] = Integer.MIN_VALUE;
+        for (ii = 0; ii < MAX_MOVIES; ++ii) {
+            this.theMovies[ii] = false;
+            this.theMinTP[ii] = Integer.MAX_VALUE;
+            this.theMaxTP[ii] = Integer.MIN_VALUE;
         }
         this.baseName = null;
-        if (!file.isDirectory()) {
+        if (!dir.isDirectory()) {
             return false;
         }
-        File[] fileArray = file.listFiles();
+        File[] theFiles = dir.listFiles();
         this.nMovies = 0;
-        int n2 = -1;
-        int n3 = -1;
-        for (int i = 0; i < fileArray.length; ++i) {
-            int n4;
-            int n5;
-            int n6;
-            int n7;
-            int n8;
+        int lastMovieVisited = -1;
+        int lastWavelengthVisited = -1;
+        for (int iF = 0; iF < theFiles.length; ++iF) {
+            int currentTP;
+            int currentWavelength;
+            int currentMovie;
+            int i2;
+            int i1;
             block17: {
-                string = fileArray[i].getName();
-                n8 = string.lastIndexOf("_w");
-                if (n8 < 0) {
-                    n8 = string.lastIndexOf("_t");
-                    if (n8 < 0) continue;
-                    bl = true;
+                fileName = theFiles[iF].getName();
+                i1 = fileName.lastIndexOf("_w");
+                if (i1 < 0) {
+                    i1 = fileName.lastIndexOf("_t");
+                    if (i1 < 0) continue;
+                    boolNoWavelengthName = true;
                 }
-                if ((n7 = string.substring(0, n8).lastIndexOf("n")) < 0) continue;
+                if ((i2 = fileName.substring(0, i1).lastIndexOf("n")) < 0) continue;
                 if (this.baseName == null) {
-                    this.baseName = string.substring(0, n7);
+                    this.baseName = fileName.substring(0, i2);
                 }
                 try {
-                    n6 = Integer.valueOf(string.substring(n7 + 1, n8));
+                    currentMovie = Integer.valueOf(fileName.substring(i2 + 1, i1));
                 }
-                catch (Exception exception) {
+                catch (Exception e) {
                     continue;
                 }
-                if (!this.theMovies[n6 - 1]) {
-                    this.theMovies[n6 - 1] = true;
+                if (!this.theMovies[currentMovie - 1]) {
+                    this.theMovies[currentMovie - 1] = true;
                     ++this.nMovies;
                 }
-                if (!bl) {
-                    n7 = (n8 += 2) + 1;
+                if (!boolNoWavelengthName) {
+                    i2 = (i1 += 2) + 1;
                     try {
-                        n5 = Integer.valueOf(string.substring(n8, n7));
+                        currentWavelength = Integer.valueOf(fileName.substring(i1, i2));
                         break block17;
                     }
-                    catch (Exception exception) {
+                    catch (Exception e) {
                         continue;
                     }
                 }
-                n5 = 1;
+                currentWavelength = 1;
             }
-            if (!this.theWavelengths[n5 - 1]) {
-                this.theWavelengths[n5 - 1] = true;
+            if (!this.theWavelengths[currentWavelength - 1]) {
+                this.theWavelengths[currentWavelength - 1] = true;
                 ++this.nWavelengths;
             }
-            n8 = string.lastIndexOf("_t") + 2;
-            this.channelNames[n5 - 1] = !bl ? string.substring(n7, n8 - 2) : new String("");
-            n7 = string.lastIndexOf(".");
+            i1 = fileName.lastIndexOf("_t") + 2;
+            this.channelNames[currentWavelength - 1] = !boolNoWavelengthName ? fileName.substring(i2, i1 - 2) : new String("");
+            i2 = fileName.lastIndexOf(".");
             try {
-                n4 = Integer.valueOf(string.substring(n8, n7));
+                currentTP = Integer.valueOf(fileName.substring(i1, i2));
             }
-            catch (Exception exception) {
+            catch (Exception e) {
                 continue;
             }
-            if (n4 < this.theMinTP[n6 - 1]) {
-                this.theMinTP[n6 - 1] = n4;
+            if (currentTP < this.theMinTP[currentMovie - 1]) {
+                this.theMinTP[currentMovie - 1] = currentTP;
             }
-            if (n4 <= this.theMaxTP[n6 - 1]) continue;
-            this.theMaxTP[n6 - 1] = n4;
+            if (currentTP <= this.theMaxTP[currentMovie - 1]) continue;
+            this.theMaxTP[currentMovie - 1] = currentTP;
         }
         return true;
     }
 
-    public ImagePlus computeProjection(ImagePlus imagePlus, int n) {
+    public ImagePlus computeProjection(ImagePlus imp, int gs) {
         IJ.redirectErrorMessages();
-        int n2 = imagePlus.getStackSize();
-        if (n2 == 0) {
+        int imp_size = imp.getStackSize();
+        if (imp_size == 0) {
             IJ.log((String)"Empty stack.");
         }
-        ImageStack imageStack = imagePlus.createEmptyStack();
-        ZProjector zProjector = new ZProjector(imagePlus);
-        for (int i = 0; i < n2 / n; ++i) {
-            zProjector.setStartSlice(i * n + 1);
-            zProjector.setStopSlice((i + 1) * n);
-            zProjector.setMethod(this.defaultMethod);
-            zProjector.doProjection();
-            ImagePlus imagePlus2 = zProjector.getProjection();
-            ImageProcessor imageProcessor = imagePlus2.getProcessor();
-            imageStack.addSlice("Proj. " + (i + 1), imageProcessor);
+        ImageStack out_stack = imp.createEmptyStack();
+        ZProjector zproj = new ZProjector(imp);
+        for (int t = 0; t < imp_size / gs; ++t) {
+            zproj.setStartSlice(t * gs + 1);
+            zproj.setStopSlice((t + 1) * gs);
+            zproj.setMethod(this.defaultMethod);
+            zproj.doProjection();
+            ImagePlus projection = zproj.getProjection();
+            ImageProcessor improc = projection.getProcessor();
+            out_stack.addSlice("Proj. " + (t + 1), improc);
         }
-        ImagePlus imagePlus3 = new ImagePlus("Projection of " + imagePlus.getTitle(), imageStack);
-        return imagePlus3;
+        ImagePlus out_image = new ImagePlus("Projection of " + imp.getTitle(), out_stack);
+        return out_image;
     }
 
-    public boolean writeTIFF(ImagePlus imagePlus, String string, String string2) {
-        if (imagePlus == null) {
+    public boolean writeTIFF(ImagePlus imp, String name, String directory) {
+        if (imp == null) {
             return false;
         }
-        if (!string2.endsWith(File.separator)) {
-            string2 = new String(string2 + File.separator);
+        if (!directory.endsWith(File.separator)) {
+            directory = new String(directory + File.separator);
         }
-        String string3 = string2 + string;
-        FileInfo fileInfo = imagePlus.getFileInfo();
-        Object object = imagePlus.getProperty("Info");
-        if (object != null && object instanceof String) {
-            fileInfo.info = (String)object;
+        String path = directory + name;
+        FileInfo fi = imp.getFileInfo();
+        Object info = imp.getProperty("Info");
+        if (info != null && info instanceof String) {
+            fi.info = (String)info;
         }
-        String string4 = new FileSaver(imagePlus).getDescriptionString();
-        fileInfo.sliceLabels = imagePlus.getImageStack().getSliceLabels();
+        String description = new FileSaver(imp).getDescriptionString();
+        fi.sliceLabels = imp.getImageStack().getSliceLabels();
         try {
-            TiffEncoder tiffEncoder = new TiffEncoder(fileInfo);
-            DataOutputStream dataOutputStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(string3)));
-            tiffEncoder.write(dataOutputStream);
-            dataOutputStream.close();
+            TiffEncoder file = new TiffEncoder(fi);
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(path)));
+            file.write(out);
+            out.close();
         }
-        catch (IOException iOException) {
-            iOException.printStackTrace();
+        catch (IOException e) {
+            e.printStackTrace();
             return false;
         }
         return true;
     }
 }
-
