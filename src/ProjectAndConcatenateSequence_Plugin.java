@@ -26,12 +26,19 @@ import ij.io.TiffEncoder;
 import ij.plugin.PlugIn;
 import ij.plugin.ZProjector;
 import ij.process.ImageProcessor;
+import ij.gui.GenericDialog;
 import java.awt.image.ColorModel;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 
 public class ProjectAndConcatenateSequence_Plugin
 implements PlugIn {
@@ -48,66 +55,340 @@ implements PlugIn {
     String[] channelNames = new String[MAX_WAVELENGTHS];
     int defaultMethod = 1;
 
+    // new fields
+    String parentDir;
+    String incrementMode;
+    String outputBaseName;
+    int projFirst = -1;
+    int projLast = -1;
+    boolean projectAll = true;
+
+    Map<String, List<Integer>> movieGroups = new LinkedHashMap<>();
+    private List<Integer> ignoredMovies = new ArrayList<>();
+    // boolean deleteRawFiles = false;
+
+    // new run method
+    @Override
     public void run(String args) {
-        String imageName;
-        int ind = -1;
-        int first = -1;
-        int last = -1;
-        IJ.redirectErrorMessages();
 
-        // OpenDialog od = new OpenDialog("Select a file in the folder to process ...", this.currDir);
-        // this.currDir = od.getDirectory();
-        // if (this.currDir == null) {
-        //     return;
-        // }
-        String options = Macro.getOptions();
+        // TODO: delete before release
+        // IJ.showMessage("NEW VERSION");
 
-        if (options != null) {
-            this.currDir = Macro.getValue(options, "directory", "");
-        } else {
-            OpenDialog od = new OpenDialog(
-                "Select a file in the folder to process ...",
-                this.currDir
-            );
-            this.currDir = od.getDirectory();
-        }
-
-        if (this.currDir == null || this.currDir.equals("")) {
+        if (!showFirstDialog())
             return;
+
+        if(!showSecondDialog())
+            return;
+
+        sortFiles();
+
+        for (int groupNum = 1; groupNum <= movieGroups.size(); groupNum++) {
+
+            String groupDir = parentDir + "movie" + groupNum + File.separator;
+
+            File dir = new File(groupDir);
+
+            if (!dir.exists())
+                continue;
+
+            IJ.log("Processing group " + groupNum);
+
+            processEmbryo(groupDir, groupNum);
         }
 
-        boolean projectAll = true;
-        String sliceRange = IJ.getString((String)"Slices to project (first(min is 1)-last):", (String)"");
-        if (sliceRange != null && !sliceRange.equals("")) {
-            ind = sliceRange.indexOf("-");
-            first = Integer.valueOf(sliceRange.substring(0, ind));
-            last = Integer.valueOf(sliceRange.substring(ind + 1));
+        // if (deleteRawFiles) {
+        deleteRawData();
+        // }
+        
+        // TODO: delete before release
+        // IJ.showMessage("Finished");
+    }
+
+    private boolean showFirstDialog() {
+
+        // prompt user for processing settings
+        GenericDialog gd = new GenericDialog("Processing Settings");
+
+        // user enters parent directory
+        gd.addDirectoryField("Parent folder", "");
+
+        String[] choices = {"By 2 (Image and pulse line and go)", "By 1 (Pulse line and go)"};
+
+        gd.addChoice("Increment", choices, choices[0]);
+
+        gd.addStringField("Slices to project (blank = all)", "");
+
+        // to do: change this and actually make it work
+        // gd.addStringField("Output image base name", "projection");
+
+        // gd.addCheckbox("Delete raw data after processing", true);
+
+        gd.showDialog();
+
+        if (gd.wasCanceled())
+            return false;
+
+        parentDir = gd.getNextString();
+
+        if (!parentDir.endsWith(File.separator))
+            parentDir += File.separator;
+
+        incrementMode = gd.getNextChoice();
+
+        String sliceRange = gd.getNextString();
+
+        // outputBaseName = gd.getNextString();
+
+        // deleteRawFiles = gd.getNextBoolean();
+
+        if (sliceRange != null && !sliceRange.trim().equals("")) {
+            int dash = sliceRange.indexOf("-");
+            projFirst = Integer.parseInt(sliceRange.substring(0, dash));
+            projLast = Integer.parseInt(sliceRange.substring(dash + 1));
             projectAll = false;
         }
-        if ((imageName = IJ.getString((String)"Output image base name:", (String)"")) == null) {
+
+        return true;
+    }
+
+    private boolean showSecondDialog() {
+
+        GenericDialog gd = new GenericDialog("Group Selection");
+
+        List<String> movieNamesList = new ArrayList<>();
+
+        File parent = new File(parentDir);
+        File[] files = parent.listFiles();
+
+        if (files == null)
+            return false;
+
+        for (File f : files) {
+
+            String name = f.getName();
+
+            if (!name.toLowerCase().endsWith(".tif"))
+                continue;
+
+            int underscore = name.indexOf("_");
+
+            if (underscore < 0)
+                continue;
+
+            String prefix = name.substring(0, underscore);
+
+            if (prefix.matches("n\\d+") && !movieNamesList.contains(prefix)) {
+
+                movieNamesList.add(prefix);
+            }
+        }
+
+        movieNamesList.sort((a, b) -> {
+            int numA = Integer.parseInt(a.substring(1));
+            int numB = Integer.parseInt(b.substring(1));
+            return Integer.compare(numA, numB);
+        });
+
+        String[] movieNames = movieNamesList.toArray(new String[0]);
+        String[] groups = new String[movieNames.length + 1];
+        
+        for (int i = 0; i < movieNames.length; i++) {
+            groups[i] = "Group " + (i + 1);
+        }
+
+        groups[movieNames.length] = "Ignore";
+        
+        // create one dropdown per movie and set the default option based on the increment mode selected
+        for (int i = 0; i < movieNames.length; i++) {
+
+            String defaultGroup;
+
+            if (incrementMode.equals("By 2 (Image and pulse line and go)")) {
+                // group defaults are set to increment by 2
+                defaultGroup = "Group " + ((i / 2) + 1);
+            } else {
+                // group defaults are set to increment by 1
+                defaultGroup = "Group " + (i + 1);
+            }
+
+            gd.addChoice(movieNames[i], groups, defaultGroup);
+        }
+
+        gd.showDialog();
+
+        if (gd.wasCanceled()) {
+            return false;
+        }
+
+        movieGroups.clear();
+        ignoredMovies.clear();
+
+        // read the user's group selections
+        for (String movie : movieNames) {
+
+            String group = gd.getNextChoice();
+            int movieNumber = Integer.parseInt(movie.substring(1));
+
+            if (group.equals("Ignore")) {
+                ignoredMovies.add(movieNumber);
+                continue;
+            }
+
+            movieGroups.computeIfAbsent(group, k -> new ArrayList<>()).add(movieNumber);
+        }
+
+        return true;
+    }
+
+    private void sortFiles() {
+
+        IJ.log("Sorting files...");
+
+        File parent = new File(parentDir);
+
+        File[] files = parent.listFiles();
+
+        if (files == null)
             return;
+
+        int embryoNum = 1;
+
+        for (List<Integer> groupMovies : movieGroups.values()) {
+
+            File target = new File(parentDir + "movie" + embryoNum);
+
+            if (!target.exists())
+                target.mkdirs();
+
+            for (File f : files) {
+
+                String curr = f.getName();
+
+                for (Integer movieNum : groupMovies) {
+
+                    String prefix = "n" + movieNum;
+
+                    if (curr.startsWith(prefix + "_") || curr.startsWith(prefix + ".")) {
+
+                        f.renameTo(new File(target, curr));
+
+                        break;
+                    }
+                }
+            }
+
+            embryoNum++;
         }
-        this.readMovieInfo();
-        System.out.println("There are " + this.nMovies + " movies in this folder.");
-        System.out.println("There are " + this.nWavelengths + " wavelengths per movie.");
-        for (int ii = 0; ii < MAX_MOVIES; ++ii) {
-            if (!this.theMovies[ii]) continue;
-            System.out.println("Movie #" + (ii + 1) + " starts at " + this.theMinTP[ii] + " and ends at " + this.theMaxTP[ii]);
+
+        // move ignored movies
+        if (!ignoredMovies.isEmpty()) {
+            File ignoredDir = new File(parent, "ignored files");
+            ignoredDir.mkdirs();
+
+            for (File f : files) {
+
+                if (!f.isFile())
+                    continue;
+
+                String curr = f.getName();
+
+                for (Integer movieNum : ignoredMovies) {
+
+                    String prefix = "n" + movieNum;
+
+                    if (curr.startsWith(prefix + "_") ||
+                        curr.startsWith(prefix + ".")) {
+
+                        f.renameTo(new File(ignoredDir, curr));
+                        break;
+                    }
+                }
+            }
         }
+
+
+
+        // if (incrementMode.equals("Pulse line and go")) {
+
+        //     for (File f : files) {
+
+        //         String curr = f.getName();
+
+        //         for (int embryo = startAt; embryo < startAt + numFolders; embryo++) {
+
+        //             String prefix = "n" + embryo;
+
+        //             if (curr.startsWith(prefix + "_") || curr.startsWith(prefix + ".")) {
+
+        //                 File target = new File(parentDir + "movie" + embryo);
+
+        //                 if (!target.exists())
+        //                     target.mkdirs();
+
+        //                 f.renameTo(new File(target,curr));
+
+        //                 break;
+        //             }
+        //         }
+        //     }
+        // }
+        // else {
+        //     int embryoNum = 1;
+
+        //     for (int movie = startAt; movie < numFolders * 2; movie += 2) {
+
+        //         File target = new File(parentDir + "movie" + embryoNum);
+
+        //         target.mkdirs();
+
+        //         final String prefix1 = "n" + movie;
+
+        //         final String prefix2 = "n" + (movie + 1);
+
+        //         for (File f : files) {
+
+        //             String curr = f.getName();
+
+        //             if (curr.startsWith(prefix1 + "_") || curr.startsWith(prefix1 + ".")||
+        //                 curr.startsWith(prefix2 + "_") || curr.startsWith(prefix2 + ".")) {
+                        
+        //                 f.renameTo(new File(target, curr));
+        //             }
+        //         }
+
+        //         embryoNum++;
+        //     }
+        // }
+
+        IJ.log("Sorting complete");
+    }
+
+
+    private void processEmbryo(String embryoDir, int movieNum) {
+        this.currDir = embryoDir;
+
+        readMovieInfo();
+
         for (int iw = 0; iw < MAX_WAVELENGTHS; ++iw) {
-            if (!this.theWavelengths[iw]) continue;
+
+            if (!theWavelengths[iw])
+                continue;
+
             ImageStack finalStack = null;
             int finalcount = 0;
             for (int im = 0; im < MAX_MOVIES; ++im) {
-                if (!this.theMovies[im]) continue;
-                System.out.print("Processing movie #" + (im + 1) + ", wavelength #" + (iw + 1) + " ... ");
+                if (!this.theMovies[im]) 
+                    continue;
+                //System.out.print("Processing movie #" + (im + 1) + ", wavelength #" + (iw + 1) + " ... ");
                 ImageStack stack = null;
+
                 int width = 0;
                 int height = 0;
                 int depth = 0;
                 int bitDepth = 0;
                 int count = 0;
                 ColorModel cm = null;
+
                 for (int it = this.theMinTP[im]; it <= this.theMaxTP[im]; ++it) {
                     String fileName = null;
                     fileName = !this.channelNames[iw].equals("") ? new String(this.baseName + "n" + (im + 1) + "_w" + (iw + 1) + this.channelNames[iw] + "_t" + it + ".TIF") : new String(this.baseName + "n" + (im + 1) + "_t" + it + ".TIF");
@@ -132,10 +413,14 @@ implements PlugIn {
                             IJ.log((String)(fileName + ": wrong size; " + width + "x" + height + " expected, " + imp.getWidth() + "x" + imp.getHeight() + " found"));
                             continue;
                         }
+                        // added next two lines
+                        int first = projFirst;
+                        int last = projLast;
                         ImageStack inputStack = imp.getStack();
                         if (projectAll) {
                             first = 1;
                             last = inputStack.getSize();
+                            depth = last - first + 1;
                         } else {
                             if (first < 1) {
                                 first = 1;
@@ -174,12 +459,16 @@ implements PlugIn {
                         break;
                     }
                     catch (Exception ex) {
-                        System.out.println("\nError loading " + fileName + ".\n");
+                        // System.out.println("\nError loading " + fileName + ".\n");
                         ex.printStackTrace();
                         return;
                     }
                 }
-                ImagePlus projected = this.computeProjection(new ImagePlus("Projection of movie #" + (im - 1) + " - " + this.channelNames[iw], stack), depth);
+                if (stack == null) {
+                    IJ.log("No images found for movie " + (im + 1));
+                    continue;
+                }
+                ImagePlus projected = this.computeProjection(new ImagePlus("Projection of movie #" + (im + 1) + " - " + this.channelNames[iw], stack), depth);
                 ImageStack projStack = projected.getImageStack();
                 if (finalcount == 0) {
                     finalStack = new ImageStack(width, height, cm);
@@ -191,14 +480,86 @@ implements PlugIn {
                 stack = null;
                 projected = null;
                 projStack = null;
-                System.gc();
-                System.out.println("done!");
+                //System.gc();
+                //System.out.println("done!");
             }
-            this.writeTIFF(new ImagePlus("Concatenated movie - " + this.channelNames[iw], finalStack), imageName + "_" + this.channelNames[iw] + ".tif", this.currDir);
+            if (finalStack == null) continue;
+            this.writeTIFF(new ImagePlus("Concatenated movie - " + this.channelNames[iw], finalStack), movieNum + "_" + this.channelNames[iw] + ".tif", this.currDir);
             finalStack = null;
-            System.gc();
+            //System.gc();
         }
     }
+
+    private void deleteRawData() {
+        IJ.log("Moving raw files...");
+
+        int numGroups = movieGroups.size();
+
+        for (int group = 1; group <= numGroups; group++) {
+
+            File movieDir = new File(parentDir + "movie" + group);
+
+            if (!movieDir.exists())
+                continue;
+
+            File rawDir = new File(parentDir, "raw files");
+
+            if (!rawDir.exists())
+                rawDir.mkdirs();
+
+            File[] files = movieDir.listFiles();
+
+            if (files == null)
+                continue;
+
+            for (File f : files) {
+
+                String name = f.getName();
+
+                if (name.matches("^n\\d+.*")) {
+                    File destination = new File(rawDir, name);
+              
+                    if (!f.renameTo(destination)) {
+                        IJ.log("Could not move: " + name);
+                    }
+                }
+            }
+        }
+
+        /*
+        IJ.log("Deleting raw files...");
+
+        int numGroups = movieGroups.size();
+
+        for (int group = 1; group <= numGroups; group++) {
+
+            File movieDir = new File(parentDir + "movie" + group);
+
+            if (!movieDir.exists())
+                continue;
+
+            File[] files = movieDir.listFiles();
+
+            if (files == null)
+                continue;
+
+            for (File f : files) {
+
+                String name = f.getName();
+
+                if (name.matches("^n\\d+.*")) {
+
+                    if (!f.delete()) {
+                        IJ.log("Could not delete: " + name);
+                    }
+                }
+            }
+        }
+        */
+
+        IJ.log("Cleanup complete");
+    }
+
 
     private boolean readMovieInfo() {
         int ii;
